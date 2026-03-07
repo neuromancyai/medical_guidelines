@@ -1,6 +1,10 @@
-import sys
-import logging
 import base64
+import logging
+import subprocess
+import sys
+
+from collections.abc import Generator
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import anthropic
@@ -14,7 +18,8 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "claude-sonnet-4-20250514"
+_DEFAULT_ENCODING = "utf-8"
+_MODEL = "claude-opus-4-6"
 _PROMPT = (
     "Convert this PDF page to Markdown. "
     "Reproduce all text content faithfully. "
@@ -22,30 +27,76 @@ _PROMPT = (
     "Do not add any commentary — output ONLY the Markdown content."
 )
 
+_CONFLICT_MARKERS = ("<<<<<<< ", "=======\n", ">>>>>>> ")
 
-def split_pdf(input_path: Path) -> list[Path]:
-    document = pymupdf.open(input_path)
-    page_paths: list[Path] = []
 
+class OcrError(Exception):
+    def __init__(self, first: str, second: str) -> None:
+        self.first = first
+        self.second = second
+
+
+def merge_conflict(first: str, second: str) -> str:
+    first_lines = first.splitlines(keepends=True)
+    second_lines = second.splitlines(keepends=True)
+    result: list[str] = []
+
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, first_lines, second_lines).get_opcodes():
+        if tag == "equal":
+            result.extend(first_lines[i1:i2])
+        else:
+            result.append(f"{_CONFLICT_MARKERS[0]}first_shot\n")
+            result.extend(first_lines[i1:i2])
+            if result[-1][-1] != "\n":
+                result.append("\n")
+            result.append(_CONFLICT_MARKERS[1])
+            result.extend(second_lines[j1:j2])
+            if result[-1][-1] != "\n":
+                result.append("\n")
+            result.append(f"{_CONFLICT_MARKERS[2]}second_shot\n")
+
+    return "".join(result)
+
+
+def has_conflict_markers(text: str) -> bool:
+    return any(marker in text for marker in _CONFLICT_MARKERS)
+
+
+def resolve_conflict(conflict_path: Path) -> str | None:
+    subprocess.run(["code", "--wait", str(conflict_path)], check=True, shell=True)
+    resolved = conflict_path.read_text(encoding=_DEFAULT_ENCODING)
+
+    if has_conflict_markers(resolved):
+        conflict_path.unlink()
+        return None
+
+    conflict_path.unlink()
+    return resolved
+
+
+def get_pages(document: pymupdf.Document) -> Generator[pymupdf.Document]:
     for i in range(len(document)):
-        output_path = input_path.with_name(f"{input_path.stem}_page_{i + 1}.pdf")
-        single = pymupdf.open()
-        single.insert_pdf(document, from_page=i, to_page=i)
-        single.save(str(output_path))
-        single.close()
-        page_paths.append(ouputt_path)
-
-    document.close()
-
-    return page_paths
+        with pymupdf.open() as page:
+            page.insert_pdf(document, from_page=i, to_page=i)
+            yield page
 
 
-def pdf_to_markdown(client: anthropic.Anthropic, path: Path) -> str:
+def pdf_to_markdown(
+    client: anthropic.Anthropic, path: Path, previous_page: str | None = None
+) -> str:
     data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
+
+    prompt = _PROMPT
+    if previous_page is not None:
+        prompt += (
+            "\n\nHere is the Markdown output of the previous page for "
+            "consistency in formatting, terminology, and style:\n\n"
+            + previous_page
+        )
 
     message = client.messages.create(
         model=_MODEL,
-        max_tokens=4096,
+        max_tokens=8192,
         messages=[
             {
                 "role": "user",
@@ -58,7 +109,7 @@ def pdf_to_markdown(client: anthropic.Anthropic, path: Path) -> str:
                             "data": data
                         },
                     },
-                    {"type": "text", "text": _PROMPT},
+                    {"type": "text", "text": prompt},
                 ],
             }
         ]
@@ -67,41 +118,80 @@ def pdf_to_markdown(client: anthropic.Anthropic, path: Path) -> str:
     return message.content[0].text
 
 
-def process_page(client: anthropic.Anthropic, input_path: Path) -> None:
-    first_shot = pdf_to_markdown(client, input_path)
-    second_shot = pdf_to_markdown(client, input_path)
+def process_page(
+    client: anthropic.Anthropic, input_path: Path, previous_page: str | None = None
+) -> str:
+    first_shot = pdf_to_markdown(client, input_path, previous_page)
+    second_shot = pdf_to_markdown(client, input_path, previous_page)
 
     if first_shot != second_shot:
-        raise IOError
+        raise OcrError(first_shot, second_shot)
 
-    output_path = input_path.with_suffix(".md")
-    output_path.write_text(first_shot, encoding="utf-8")
+    return first_shot
 
 
 def main() -> None:
     if len(sys.argv) != 2:
-        print(f"Usage: python {sys.argv[0]} <path>")
+        print(f"Usage: python {sys.argv[0]} <input_path>")
         return
 
-    path = Path(sys.argv[1]).resolve()
+    input_path = Path(sys.argv[1]).resolve()
 
-    if not path.is_file() or path.suffix.lower() != ".pdf":
-        logger.error("File not found or not a PDF: %s", path)
+    if not input_path.is_file() or input_path.suffix.lower() != ".pdf":
+        logger.error("File not found or not a PDF: %s", input_path)
         return
 
-    client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY env var
+    page_paths: list[Path] = []
 
-    logger.info("Splitting %s into pages...", pdf_path.name)
-    page_paths = split_pdf(pdf_path)
-    logger.info("Split into %d pages.", len(page_paths))
+    with pymupdf.open(input_path) as document:
+        for i, page in enumerate(get_pages(document)):
+            page_path = input_path.with_name(
+                f"{input_path.stem}_page_{i + 1}.pdf"
+            )
+            page_paths.append(page_path)
 
-    success = 0
-    failed = 0
+            if not page_path.exists():
+                page.save(str(page_path))
+
+    client = anthropic.Anthropic()
+    previous_page: str | None = None
+
     for page_path in page_paths:
-        try:
-            process_page(client, page_path):
-        except IOError:
-            logger.error("Processing '%s' failed.", )
+        md_path = page_path.with_suffix(".md")
+
+        if md_path.exists():
+            previous_page = md_path.read_text(encoding=_DEFAULT_ENCODING)
+            continue
+
+        while True:
+            try:
+                md_content = process_page(client, page_path, previous_page)
+                break
+            except OcrError as e:
+                conflict_path = page_path.with_suffix(".md.conflict")
+                conflict_path.write_text(
+                    merge_conflict(e.first, e.second),
+                    encoding=_DEFAULT_ENCODING
+                )
+                md_content = resolve_conflict(conflict_path)
+                if md_content is not None:
+                    break
+
+        md_path.write_text(md_content, encoding=_DEFAULT_ENCODING)
+        previous_page = md_content
+
+    output_path = input_path.with_suffix(".md")
+    parts: list[str] = []
+
+    for page_path in page_paths:
+        md_path = page_path.with_suffix(".md")
+        parts.append(md_path.read_text(encoding=_DEFAULT_ENCODING))
+
+    output_path.write_text("\n".join(parts), encoding=_DEFAULT_ENCODING)
+
+    for page_path in page_paths:
+        page_path.unlink()
+        page_path.with_suffix(".md").unlink()
 
 
 if __name__ == "__main__":
