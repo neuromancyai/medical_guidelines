@@ -1,0 +1,22 @@
+[project]
+name = "medical-guidelines"
+version = "0.1.0"
+description = "A trusted corpus of clinical guidelines, curated for LLM use"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.13.3",
+    "beautifulsoup4>=4.14.3",
+    "pydantic>=2.12.5",
+    "yarl>=1.23.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "anthropic>=0.84.0",
+    "pymupdf>=1.27.1",
+]
