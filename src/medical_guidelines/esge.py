@@ -79,7 +79,7 @@ async def download_index() -> Index:
                     detail_url = _PAGE_API_URL / URL(href).path[1:]
                 else:
                     detail_url = _PAGE_API_URL / href[1:]
-                
+
                 detail_urls.append(detail_url)
 
         for detail_url in detail_urls:
@@ -94,10 +94,15 @@ async def download_index() -> Index:
             doi_node = next(_find_nodes_by_title(content, "Link + Copyright"))
             html = doi_node["properties"]["text"]
             soup = BeautifulSoup(html, "html.parser")
+            target_name = button_node["properties"]["targetName"][1:]
 
             entry_name = content["title"]
-            entry_url = \
-                _BASE_URL / button_node["properties"]["targetName"][1:]
+
+            if "://" in target_name:
+                entry_url = URL(button_node["properties"]["targetName"])
+            else:
+                entry_url = \
+                    _BASE_URL / button_node["properties"]["targetName"][1:]
 
             entry_doi = \
                 _extract_doi(list(soup.find("h6").children)[0].get_text())
