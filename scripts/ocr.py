@@ -84,11 +84,20 @@ def get_pages(document: pymupdf.Document) -> Generator[pymupdf.Document]:
 
 
 def pdf_to_markdown(
-    client: anthropic.Anthropic, path: Path, previous_pages: list[str] | None = None
+    client: anthropic.Anthropic,
+    path: Path,
+    previous_pages: list[str] | None = None,
+    example: str | None = None,
 ) -> str:
     data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
 
     prompt = _PROMPT
+    if example:
+        prompt += (
+            "\n\nHere is an example of the desired Markdown output "
+            "for reference on formatting, terminology, and style:\n\n"
+            + example
+        )
     if previous_pages:
         context = "\n\n---\n\n".join(previous_pages)
         prompt += (
@@ -122,10 +131,13 @@ def pdf_to_markdown(
 
 
 def process_page(
-    client: anthropic.Anthropic, input_path: Path, previous_pages: list[str] | None = None
+    client: anthropic.Anthropic,
+    input_path: Path,
+    previous_pages: list[str] | None = None,
+    example: str | None = None,
 ) -> str:
-    first_shot = pdf_to_markdown(client, input_path, previous_pages)
-    second_shot = pdf_to_markdown(client, input_path, previous_pages)
+    first_shot = pdf_to_markdown(client, input_path, previous_pages, example)
+    second_shot = pdf_to_markdown(client, input_path, previous_pages, example)
 
     if first_shot != second_shot:
         raise OcrError(first_shot, second_shot)
@@ -134,8 +146,8 @@ def process_page(
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        print(f"Usage: python {sys.argv[0]} <input_path>")
+    if len(sys.argv) < 2 or len(sys.argv) > 3:
+        print(f"Usage: python {sys.argv[0]} <input_path> [example_md_path]")
         return
 
     input_path = Path(sys.argv[1]).resolve()
@@ -143,6 +155,14 @@ def main() -> None:
     if not input_path.is_file() or input_path.suffix.lower() != ".pdf":
         logger.error("File not found or not a PDF: %s", input_path)
         return
+
+    example: str | None = None
+    if len(sys.argv) == 3:
+        example_path = Path(sys.argv[2]).resolve()
+        if not example_path.is_file() or example_path.suffix.lower() != ".md":
+            logger.error("Example file not found or not a Markdown file: %s", example_path)
+            return
+        example = example_path.read_text(encoding=_DEFAULT_ENCODING)
 
     page_paths: list[Path] = []
 
@@ -169,7 +189,7 @@ def main() -> None:
 
             while True:
                 try:
-                    md_content = process_page(client, page_path, context)
+                    md_content = process_page(client, page_path, context, example)
                     break
                 except OcrError as e:
                     conflict_path = page_path.with_suffix(".md.conflict")
