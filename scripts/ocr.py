@@ -28,7 +28,7 @@ _PROMPT = (
     "Convert all diagrams into valid Mermaid diagramming language notation."
 )
 
-_CONTEXT_PAGES = 3
+_CONTEXT_PAGES = 5
 _CONFLICT_MARKERS = ("<<<<<<< ", "=======\n", ">>>>>>> ")
 
 
