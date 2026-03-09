@@ -1,6 +1,7 @@
 import re
 
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import Any
 
 import aiohttp
@@ -8,6 +9,8 @@ import aiohttp
 from bs4 import BeautifulSoup
 from pydantic import BaseModel
 from yarl import URL
+
+from .utility import doi_to_file_name, download_file
 
 
 _BASE_URL = URL("https://www.esge.com/")
@@ -59,60 +62,71 @@ def _extract_doi(text: str) -> str:
     return match.group()
 
 
-async def download_index() -> Index:
+async def download_index(session: aiohttp.ClientSession) -> Index:
     index = []
+    detail_urls = []
 
-    async with aiohttp.ClientSession() as session:
-        detail_urls = []
+    async with session.get(_PAGE_API_URL / "guidelines") as response:
+        data = await response.json()
 
-        async with session.get(_PAGE_API_URL / "guidelines") as response:
+    for node in _find_nodes_by_title(data["content"], "copy list"):
+        html = node["properties"]["text"]
+        soup = BeautifulSoup(html, "html.parser")
+
+        for anchor in soup.find_all("a"):
+            href = anchor["href"]
+
+            if "://" in href:
+                detail_url = _PAGE_API_URL / URL(href).path[1:]
+            else:
+                detail_url = _PAGE_API_URL / href[1:]
+
+            detail_urls.append(detail_url)
+
+    for detail_url in detail_urls:
+        async with session.get(detail_url) as response:
             data = await response.json()
 
-        for node in _find_nodes_by_title(data["content"], "copy list"):
-            html = node["properties"]["text"]
-            soup = BeautifulSoup(html, "html.parser")
+        content = data["content"]
+        button_node = next(
+            _find_nodes_by_title(content, "View full guideline")
+        )
 
-            for anchor in soup.find_all("a"):
-                href = anchor["href"]
+        doi_node = next(_find_nodes_by_title(content, "Link + Copyright"))
+        html = doi_node["properties"]["text"]
+        soup = BeautifulSoup(html, "html.parser")
+        target_name = button_node["properties"]["targetName"][1:]
 
-                if "://" in href:
-                    detail_url = _PAGE_API_URL / URL(href).path[1:]
-                else:
-                    detail_url = _PAGE_API_URL / href[1:]
+        entry_name = content["title"]
 
-                detail_urls.append(detail_url)
+        if "://" in target_name:
+            entry_url = URL(button_node["properties"]["targetName"])
+        else:
+            entry_url = \
+                _BASE_URL / button_node["properties"]["targetName"][1:]
 
-        for detail_url in detail_urls:
-            async with session.get(detail_url) as response:
-                data = await response.json()
+        entry_doi = \
+            _extract_doi(list(soup.find("h6").children)[0].get_text())
 
-            content = data["content"]
-            button_node = next(
-                _find_nodes_by_title(content, "View full guideline")
-            )
+        entry = Entry(
+            name=entry_name,
+            url=entry_url,
+            doi=entry_doi
+        )
 
-            doi_node = next(_find_nodes_by_title(content, "Link + Copyright"))
-            html = doi_node["properties"]["text"]
-            soup = BeautifulSoup(html, "html.parser")
-            target_name = button_node["properties"]["targetName"][1:]
-
-            entry_name = content["title"]
-
-            if "://" in target_name:
-                entry_url = URL(button_node["properties"]["targetName"])
-            else:
-                entry_url = \
-                    _BASE_URL / button_node["properties"]["targetName"][1:]
-
-            entry_doi = \
-                _extract_doi(list(soup.find("h6").children)[0].get_text())
-
-            entry = Entry(
-                name=entry_name,
-                url=entry_url,
-                doi=entry_doi
-            )
-
-            index.append(entry)
+        index.append(entry)
 
     return index
+
+
+async def download_guidelines(
+    index: Index,
+    root: Path,
+    session: aiohttp.ClientSession
+) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+
+    for entry in index:
+        file = (root / doi_to_file_name(entry.doi)).with_suffix(".pdf")
+
+        await download_file(entry.url, file, session)

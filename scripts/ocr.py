@@ -24,9 +24,11 @@ _PROMPT = (
     "Convert this PDF page to Markdown. "
     "Reproduce all text content faithfully. "
     "Use proper Markdown formatting for headings, lists, tables, etc. "
-    "Do not add any commentary — output ONLY the Markdown content."
+    "Do not add any commentary — output ONLY the Markdown content. "
+    "Convert all diagrams into valid Mermaid notation."
 )
 
+_CONTEXT_PAGES = 3
 _CONFLICT_MARKERS = ("<<<<<<< ", "=======\n", ">>>>>>> ")
 
 
@@ -82,16 +84,17 @@ def get_pages(document: pymupdf.Document) -> Generator[pymupdf.Document]:
 
 
 def pdf_to_markdown(
-    client: anthropic.Anthropic, path: Path, previous_page: str | None = None
+    client: anthropic.Anthropic, path: Path, previous_pages: list[str] | None = None
 ) -> str:
     data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
 
     prompt = _PROMPT
-    if previous_page is not None:
+    if previous_pages:
+        context = "\n\n---\n\n".join(previous_pages)
         prompt += (
-            "\n\nHere is the Markdown output of the previous page for "
-            "consistency in formatting, terminology, and style:\n\n"
-            + previous_page
+            f"\n\nHere is the Markdown output of the previous {len(previous_pages)} "
+            "page(s) for consistency in formatting, terminology, and style:\n\n"
+            + context
         )
 
     message = client.messages.create(
@@ -119,10 +122,10 @@ def pdf_to_markdown(
 
 
 def process_page(
-    client: anthropic.Anthropic, input_path: Path, previous_page: str | None = None
+    client: anthropic.Anthropic, input_path: Path, previous_pages: list[str] | None = None
 ) -> str:
-    first_shot = pdf_to_markdown(client, input_path, previous_page)
-    second_shot = pdf_to_markdown(client, input_path, previous_page)
+    first_shot = pdf_to_markdown(client, input_path, previous_pages)
+    second_shot = pdf_to_markdown(client, input_path, previous_pages)
 
     if first_shot != second_shot:
         raise OcrError(first_shot, second_shot)
@@ -154,31 +157,33 @@ def main() -> None:
                 page.save(str(page_path))
 
     client = anthropic.Anthropic()
-    previous_page: str | None = None
+    recent_pages: list[str] = []
 
     for page_path in page_paths:
         md_path = page_path.with_suffix(".md")
 
         if md_path.exists():
-            previous_page = md_path.read_text(encoding=_DEFAULT_ENCODING)
-            continue
+            md_content = md_path.read_text(encoding=_DEFAULT_ENCODING)
+        else:
+            context = recent_pages[-_CONTEXT_PAGES:] or None
 
-        while True:
-            try:
-                md_content = process_page(client, page_path, previous_page)
-                break
-            except OcrError as e:
-                conflict_path = page_path.with_suffix(".md.conflict")
-                conflict_path.write_text(
-                    merge_conflict(e.first, e.second),
-                    encoding=_DEFAULT_ENCODING
-                )
-                md_content = resolve_conflict(conflict_path)
-                if md_content is not None:
+            while True:
+                try:
+                    md_content = process_page(client, page_path, context)
                     break
+                except OcrError as e:
+                    conflict_path = page_path.with_suffix(".md.conflict")
+                    conflict_path.write_text(
+                        merge_conflict(e.first, e.second),
+                        encoding=_DEFAULT_ENCODING
+                    )
+                    md_content = resolve_conflict(conflict_path)
+                    if md_content is not None:
+                        break
 
-        md_path.write_text(md_content, encoding=_DEFAULT_ENCODING)
-        previous_page = md_content
+            md_path.write_text(md_content, encoding=_DEFAULT_ENCODING)
+
+        recent_pages.append(md_content)
 
     output_path = input_path.with_suffix(".md")
     parts: list[str] = []
@@ -187,7 +192,7 @@ def main() -> None:
         md_path = page_path.with_suffix(".md")
         parts.append(md_path.read_text(encoding=_DEFAULT_ENCODING))
 
-    output_path.write_text("\n".join(parts), encoding=_DEFAULT_ENCODING)
+    output_path.write_text("\n\n".join(parts), encoding=_DEFAULT_ENCODING)
 
     for page_path in page_paths:
         page_path.unlink()
