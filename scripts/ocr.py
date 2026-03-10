@@ -25,7 +25,8 @@ _PROMPT = (
     "Reproduce all text content faithfully. "
     "Use proper Markdown formatting for headings, lists, tables, etc. "
     "Do not add any commentary — output ONLY the Markdown content. "
-    "Convert all diagrams into valid Mermaid diagramming language notation."
+    "Convert all diagrams into valid Mermaid diagramming language notation. "
+    "Leave out all the headers and footers and page furniture."
 )
 
 _CONTEXT_PAGES = 5
