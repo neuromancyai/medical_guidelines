@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "aiofiles>=25.1.0",
     "aiohttp>=3.13.3",
+    "anthropic>=0.84.0",
     "beautifulsoup4>=4.14.3",
     "pydantic>=2.12.5",
     "yarl>=1.23.0",
@@ -18,6 +19,5 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "anthropic>=0.84.0",
-    "pymupdf>=1.27.1",
+    "pymupdf>=1.27.1"
 ]
