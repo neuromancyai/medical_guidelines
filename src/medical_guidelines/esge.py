@@ -21,13 +21,13 @@ _MALFORMED_DOIS = {
 }
 
 
-class Entry(BaseModel):
+class CatalogEntry(BaseModel):
     name: str
     doi: str
     url: URL
 
 
-type Index = list[Entry]
+type Catalog = list[CatalogEntry]
 type _Node = dict[str, Any]
 
 
@@ -62,8 +62,8 @@ def _extract_doi(text: str) -> str:
     return match.group()
 
 
-async def download_index(session: aiohttp.ClientSession) -> Index:
-    index = []
+async def download_catalog(session: aiohttp.ClientSession) -> Catalog:
+    catalog = []
     details = []
 
     async with session.get(_PAGE_API_URL / "guidelines") as response:
@@ -107,25 +107,25 @@ async def download_index(session: aiohttp.ClientSession) -> Index:
         entry_doi = \
             _extract_doi(list(soup.find("h6").children)[0].get_text())
 
-        entry = Entry(
+        entry = CatalogEntry(
             name=name,
             url=entry_url,
             doi=entry_doi
         )
 
-        index.append(entry)
+        catalog.append(entry)
 
-    return index
+    return catalog
 
 
 async def download_guidelines(
-    index: Index,
+    catalog: Catalog,
     root: Path,
     session: aiohttp.ClientSession
 ) -> None:
     root.mkdir(parents=True, exist_ok=True)
 
-    for entry in index:
+    for entry in catalog:
         file = (root / doi_to_file_name(entry.doi)).with_suffix(".pdf")
 
         await download_file(entry.url, file, session)

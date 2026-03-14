@@ -4,11 +4,11 @@ from anthropic import beta_async_tool
 from anthropic.lib.tools._beta_functions import BetaAsyncFunctionTool
 from anthropic.types.beta import BetaRequestDocumentBlockParam
 
-from ..index import Index
+from ..catalog import Catalog
 
 
 def create_load_tool(
-    index: Index,
+    catalog: Catalog,
     encoding: str = "utf-8"
 ) -> BetaAsyncFunctionTool:
     @beta_async_tool
@@ -20,7 +20,7 @@ def create_load_tool(
         prompt to determine which guideline ID to load.
         """
 
-        entry = index.get(id)
+        entry = catalog.get(id)
 
         if entry is None:
             raise ValueError(f"No guideline with ID '{id}'")

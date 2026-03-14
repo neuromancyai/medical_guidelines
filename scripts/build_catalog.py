@@ -5,18 +5,18 @@ from pathlib import Path
 
 import aiohttp
 
-from medical_guidelines.index import _ASSET_PATH
-from medical_guidelines.esge import download_index
+from medical_guidelines.catalog import _ASSET_PATH
+from medical_guidelines.esge import download_catalog
 from medical_guidelines.utility import doi_to_file_name
 
 
 async def main() -> None:
     async with aiohttp.ClientSession() as session:
-        esge_index = await download_index(session)
+        esge_catalog = await download_catalog(session)
 
-    index = {}
+    catalog = {}
 
-    for entry in esge_index:
+    for entry in esge_catalog:
         file_name = doi_to_file_name(entry.doi)
         md_path = _ASSET_PATH / "esge" / f"{file_name}.md"
 
@@ -25,13 +25,13 @@ async def main() -> None:
 
         relative_path = md_path.relative_to(_ASSET_PATH)
 
-        index[entry.doi] = {
+        catalog[entry.doi] = {
             "id": entry.doi,
             "name": entry.name,
             "path": str(relative_path)
         }
 
-    print(json.dumps(index, indent=2))
+    print(json.dumps(catalog, indent=2))
 
 
 if __name__ == "__main__":
