@@ -7,7 +7,10 @@ from anthropic.types.beta import BetaRequestDocumentBlockParam
 from ..index import Index
 
 
-def create_load_tool(index: Index) -> BetaAsyncFunctionTool:
+def create_load_tool(
+    index: Index,
+    encoding: str = "utf-8"
+) -> BetaAsyncFunctionTool:
     @beta_async_tool
     async def load_medical_guideline(
         id: str,
@@ -20,9 +23,13 @@ def create_load_tool(index: Index) -> BetaAsyncFunctionTool:
         entry = index.get(id)
 
         if entry is None:
-            raise ValueError(f"No guideline found with ID '{id}'.")
+            raise ValueError(f"No guideline with ID '{id}'")
 
-        async with aiofiles.open(entry.path, "r") as stream:
+        async with aiofiles.open(
+            entry.path,
+            "r",
+            encoding=encoding
+        ) as stream:
             data = await stream.read()
 
         return [
