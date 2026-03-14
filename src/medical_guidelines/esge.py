@@ -64,7 +64,7 @@ def _extract_doi(text: str) -> str:
 
 async def download_index(session: aiohttp.ClientSession) -> Index:
     index = []
-    detail_urls = []
+    details = []
 
     async with session.get(_PAGE_API_URL / "guidelines") as response:
         data = await response.json()
@@ -75,15 +75,16 @@ async def download_index(session: aiohttp.ClientSession) -> Index:
 
         for anchor in soup.find_all("a"):
             href = anchor["href"]
+            name = anchor.get_text().strip()
 
             if "://" in href:
                 detail_url = _PAGE_API_URL / URL(href).path[1:]
             else:
                 detail_url = _PAGE_API_URL / href[1:]
 
-            detail_urls.append(detail_url)
+            details.append((detail_url, name))
 
-    for detail_url in detail_urls:
+    for detail_url, name in details:
         async with session.get(detail_url) as response:
             data = await response.json()
 
@@ -97,8 +98,6 @@ async def download_index(session: aiohttp.ClientSession) -> Index:
         soup = BeautifulSoup(html, "html.parser")
         target_name = button_node["properties"]["targetName"][1:]
 
-        entry_name = content["title"]
-
         if "://" in target_name:
             entry_url = URL(button_node["properties"]["targetName"])
         else:
@@ -109,7 +108,7 @@ async def download_index(session: aiohttp.ClientSession) -> Index:
             _extract_doi(list(soup.find("h6").children)[0].get_text())
 
         entry = Entry(
-            name=entry_name,
+            name=name,
             url=entry_url,
             doi=entry_doi
         )
